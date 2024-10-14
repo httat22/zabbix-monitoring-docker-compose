@@ -1,0 +1,271 @@
+# version: "3.8"
+services:
+  zabbix-server:
+    image: zabbix/zabbix-server-pgsql:ubuntu-latest
+    container_name: zabbix-server
+    restart: unless-stopped
+    ports:
+      - "10050:10050"
+    volumes:
+      - ./zbx_env/usr/lib/zabbix/alertscripts:/usr/lib/zabbix/alertscripts:ro
+      - ./zbx_env/usr/lib/zabbix/externalscripts:/usr/lib/zabbix/externalscripts:ro
+      - ./zbx_env/var/lib/zabbix/export:/var/lib/zabbix/export:rw
+      - ./zbx_env/var/lib/zabbix/modules:/var/lib/zabbix/modules:ro
+      - ./zbx_env/var/lib/zabbix/enc:/var/lib/zabbix/enc:ro
+      - ./zbx_env/var/lib/zabbix/ssh_keys:/var/lib/zabbix/ssh_keys:ro
+      - ./zbx_env/var/lib/zabbix/mibs:/var/lib/zabbix/mibs:ro
+    links:
+      - postgres-server:postgres-server
+    ulimits:
+      nproc: 65535
+      nofile:
+        soft: 20000
+        hard: 40000
+    deploy:
+      resources:
+        limits:
+          cpus: "0.70"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    env_file:
+      - ./env_vars/.env_db_pgsql
+      - ./env_vars/.env_srv
+    secrets:
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+    depends_on:
+      - postgres-server
+    networks:
+      # zbx_net_backend:
+      #   ipv4_address: 172.16.239.101
+      #   aliases:
+      #     - zabbix-server
+      #     - zabbix-server-pgsql
+      zbx_net_frontend:
+        ipv4_address: 172.16.238.101
+    stop_grace_period: 30s
+
+  zabbix-web-nginx-pgsql:
+    container_name: zabbix-web
+    image: zabbix/zabbix-web-nginx-pgsql:ubuntu-latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    links:
+      - postgres-server:postgres-server
+      - zabbix-server:zabbix-server
+    volumes:
+      - ./zbx_env/etc/ssl/nginx:/etc/ssl/nginx:ro
+      - ./zbx_env/usr/share/zabbix/modules/:/usr/share/zabbix/modules/:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "0.70"
+          memory: 512M
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+    env_file:
+      - ./env_vars/.env_db_pgsql
+      - ./env_vars/.env_web
+    secrets:
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+    depends_on:
+      - postgres-server
+      - zabbix-server
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      # zbx_net_backend:
+      #   ipv4_address: 172.16.239.102
+      #   aliases:
+      #     - zabbix-web-nginx-pgsql
+      #     - zabbix-web-nginx-alpine-pgsql
+      #     - zabbix-web-nginx-pgsql-alpine
+      zbx_net_frontend:
+        ipv4_address: 172.16.238.102
+      # ingress_gateway:
+      #   aliases:
+      #     - zabbix-web-nginx-pgsql
+      #     - zabbix-web-nginx-alpine-pgsql
+      #     - zabbix-web-nginx-pgsql-alpine
+    stop_grace_period: 10s
+
+  zabbix-agent1:
+    container_name: zabbix-agent1
+    image: zabbix/zabbix-agent2:ubuntu-latest
+    restart: unless-stopped
+    ports:
+      - "10051:10051"
+    links:
+      - zabbix-server:zabbix-server
+    volumes:
+      - ./zbx_agent_env/etc/zabbix/zabbix_agentd.d:/etc/zabbix/zabbix_agentd.d:ro
+      - ./zbx_agent_env/var/lib/zabbix/modules:/var/lib/zabbix/modules:ro
+      - ./zbx_agent_env/var/lib/zabbix/enc:/var/lib/zabbix/enc:ro
+      - ./zbx_agent_env/var/lib/zabbix/ssh_keys:/var/lib/zabbix/ssh_keys:ro
+    env_file:
+      - ./env_vars/.env_agent
+    privileged: true
+    pid: "host"
+    networks:
+      # zbx_net_backend:
+      #   ipv4_address: 172.16.239.103
+      #   aliases:
+      #     - zabbix-agent
+      zbx_net_frontend:
+        ipv4_address: 172.16.238.111
+    stop_grace_period: 5s
+
+  zabbix-agent2:
+    container_name: zabbix-agent2
+    image: zabbix/zabbix-agent2:ubuntu-latest
+    restart: unless-stopped
+    ports:
+      - "10052:10051"
+    volumes:
+      - ./zbx_agent_env/etc/zabbix/zabbix_agentd.d:/etc/zabbix/zabbix_agentd.d
+      - ./zbx_agent_env/var/lib/zabbix/modules:/var/lib/zabbix/modules:ro
+      - ./zbx_agent_env/var/lib/zabbix/enc:/var/lib/zabbix/enc:ro
+      - ./zbx_agent_env/var/lib/zabbix/ssh_keys:/var/lib/zabbix/ssh_keys:ro
+    env_file:
+      - ./env_vars/.env_agent
+    privileged: true
+    networks:
+      zbx_net_frontend:
+          ipv4_address: 172.16.238.112
+      # zbx_net_backend:
+      #   ipv4_address: 172.16.239.111
+    stop_grace_period: 5s
+
+  zabbix-agent3:
+    container_name: zabbix-agent3
+    image: zabbix/zabbix-agent2:ubuntu-latest
+    restart: unless-stopped
+    ports:
+      - "10053:10051"
+    volumes:
+      - ./zbx_agent_env/etc/zabbix/zabbix_agentd.d:/etc/zabbix/zabbix_agentd.d
+      - ./zbx_agent_env/var/lib/zabbix/modules:/var/lib/zabbix/modules:ro
+      - ./zbx_agent_env/var/lib/zabbix/enc:/var/lib/zabbix/enc:ro
+      - ./zbx_agent_env/var/lib/zabbix/ssh_keys:/var/lib/zabbix/ssh_keys:ro
+    env_file:
+      - ./env_vars/.env_agent
+    privileged: true
+    networks:
+      zbx_net_frontend:
+          ipv4_address: 172.16.238.113
+    stop_grace_period: 5s
+
+  postgres-server:
+    container_name: zabbix-db
+    image: postgres:16
+    restart: unless-stopped
+    volumes:
+      - ./zbx_env/var/lib/postgresql/data:/var/lib/postgresql/data:rw
+      - ./.ZBX_DB_CA_FILE:/run/secrets/root-ca.pem:ro
+      - ./.ZBX_DB_CERT_FILE:/run/secrets/server-cert.pem:ro
+      - ./.ZBX_DB_KEY_FILE:/run/secrets/server-key.pem:ro
+    env_file:
+      - ./env_vars/.env_db_pgsql
+    secrets:
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+    stop_grace_period: 1m
+    networks:
+      # zbx_net_backend:
+      #   ipv4_address: 172.16.239.104
+      #   aliases:
+      #     - postgres-server
+      #     - pgsql-server
+      #     - pgsql-database
+      zbx_net_frontend:
+        ipv4_address: 172.16.238.104
+
+  # grafana-server:
+  #   container_name: grafana
+  #   image: grafana/grafana-oss:latest
+  #   networks:
+  #     zbx_net_backend:
+  #       ipv4_address: 172.16.239.105
+  #       aliases:
+  #         - grafana-server
+  #     zbx_net_frontend:
+  #       ipv4_address: 172.16.238.105
+  #     ingress_gateway:
+  #       aliases:
+  #         - grafana-server
+  #   links:
+  #     - zabbix-server
+  #     - postgres-server
+  #   restart: always
+  #   ports:
+  #     - '3000:3000'
+  #   volumes:
+  #     - './grafana:/var/lib/grafana'
+  #     - './grafana/log:/var/log/grafana'
+  #   environment:
+  #     GF_INSTALL_PLUGINS: alexanderzobnin-zabbix-app
+  #   depends_on:
+  #     - zabbix-server
+  #     - postgres-server
+
+  attack:
+    image: thuanht/kalilinux:latest
+    container_name: attack
+    restart: unless-stopped
+    tty: true
+    stdin_open: true
+    privileged: true
+    command: /usr/sbin/sshd -D
+    networks:
+      zbx_net_frontend:
+        ipv4_address: 172.16.238.160
+
+  agenttest:
+    image: thuanht/kalilinux:latest
+    container_name: agenttest
+    restart: unless-stopped
+    tty: true
+    stdin_open: true
+    privileged: true
+    command: /usr/sbin/sshd -D
+    networks:
+      zbx_net_frontend:
+        ipv4_address: 172.16.238.150
+
+networks:
+  zbx_net_frontend:
+    driver: bridge
+    driver_opts:
+      com.docker.network.enable_ipv6: "false"
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.16.238.0/24
+  # zbx_net_backend:
+  #   driver: bridge
+  #   driver_opts:
+  #     com.docker.network.enable_ipv6: "false"
+  #   internal: true
+  #   ipam:
+  #     driver: default
+  #     config:
+  #       - subnet: 172.16.239.0/24
+  # ingress_gateway:
+  #   external: true
+  #   name: ingress_gateway
+
+secrets:
+  POSTGRES_USER:
+    file: ./env_vars/.POSTGRES_USER
+  POSTGRES_PASSWORD:
+    file: ./env_vars/.POSTGRES_PASSWORD
